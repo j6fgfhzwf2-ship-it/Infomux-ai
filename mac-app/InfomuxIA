@@ -1,1 +1,79 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct ContentView: View {
+    @State private var question: String = ""
+    @State private var pickedImages: [NSImage] = []
+    @State private var responseText: String = ""
+    @State private var showingPicker = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Infomux IA").font(.largeTitle)
+            ScrollView(.horizontal) {
+                HStack {
+                    ForEach(pickedImages, id: \.self) { img in
+                        Image(nsImage: img).resizable().frame(width:120, height:90).cornerRadius(8)
+                    }
+                }.padding()
+            }
+            TextField("Pose ta question...", text: $question).textFieldStyle(RoundedBorderTextFieldStyle())
+            HStack {
+                Button("Ajouter Images") { showingPicker = true }
+                Button("Envoyer") { sendToBackend() }
+            }
+            ScrollView {
+                Text(responseText).padding()
+            }
+        }.padding().fileImporter(isPresented: $showingPicker, allowedContentTypes: [.image]) { result in
+            switch result {
+            case .success(let url):
+                if let nsImg = NSImage(contentsOf: url) {
+                    pickedImages.append(nsImg)
+                }
+            case .failure(let err):
+                print(err.localizedDescription)
+            }
+        }
+    }
+
+    func sendToBackend() {
+        guard let url = URL(string: "http://localhost:8000/chat") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var data = Data()
+        // question
+        data.append("--\(boundary)\r\n".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"question\"\r\n\r\n".data(using: .utf8)!)
+        data.append("\(question)\r\n".data(using: .utf8)!)
+
+        // images
+        for (i, nsImg) in pickedImages.enumerated() {
+            if let tiff = nsImg.tiffRepresentation,
+               let bmp = NSBitmapImageRep(data: tiff),
+               let pngData = bmp.representation(using: .png, properties: [:]) {
+                data.append("--\(boundary)\r\n".data(using: .utf8)!)
+                data.append("Content-Disposition: form-data; name=\"images\"; filename=\"img\(i).png\"\r\n".data(using: .utf8)!)
+                data.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
+                data.append(pngData)
+                data.append("\r\n".data(using: .utf8)!)
+            }
+        }
+
+        data.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+        URLSession.shared.uploadTask(with: request, from: data) { respData, resp, err in
+            if let d = respData, let s = String(data: d, encoding: .utf8) {
+                DispatchQueue.main.async {
+                    responseText = s
+                }
+            }
+        }.resume()
+    }
+}
 
